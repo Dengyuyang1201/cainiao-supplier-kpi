@@ -284,7 +284,38 @@
         const BUSINESS_TYPES = ['BE Linehaul', 'EU External Order', 'LGG LH Self Business'];
         const defaultData = { lead_time:'', otd_rate:'', pod_rate:'', ata_rate:'', violations:'', participation:'', positive_events:'', negative_events:'', volume_share:'' };
 
-        // ===== LOCALSTORAGE =====
+        // ===== STORAGE: localStorage + URL hash fallback =====
+        let storageMode = 'unknown';
+
+        function checkStorage() {
+            try {
+                const testKey = '__storage_test__';
+                localStorage.setItem(testKey, 'test');
+                localStorage.removeItem(testKey);
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function encodeHash(data) {
+            try {
+                return '#' + btoa(encodeURIComponent(JSON.stringify(data)));
+            } catch (e) {
+                return '';
+            }
+        }
+
+        function decodeHash() {
+            try {
+                const h = location.hash;
+                if (!h || h.length < 2) return null;
+                return JSON.parse(decodeURIComponent(atob(h.slice(1))));
+            } catch (e) {
+                return null;
+            }
+        }
+
         function saveToStorage() {
             const data = {
                 suppliers: suppliers,
@@ -294,28 +325,69 @@
                 subTitle: document.getElementById('subTitle').value,
                 savedAt: new Date().toISOString()
             };
+            let saved = false;
+
+            // Try localStorage first
+            if (checkStorage()) {
+                try {
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+                    storageMode = 'localStorage';
+                    saved = true;
+                } catch (e) {
+                    console.warn('localStorage save failed:', e);
+                }
+            }
+
+            // Always update URL hash as backup (even if localStorage works)
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-                showSaveStatus('Auto-saved');
+                const hash = encodeHash(data);
+                if (hash && history.replaceState) {
+                    history.replaceState(null, '', hash);
+                }
+                if (!saved) {
+                    storageMode = 'URL hash';
+                    saved = true;
+                }
             } catch (e) {
-                showSaveStatus('Save failed (storage full)', true);
+                console.warn('Hash save failed:', e);
+            }
+
+            if (saved) {
+                showSaveStatus('Auto-saved (' + storageMode + ')');
+            } else {
+                showSaveStatus('Save failed - please use Export JSON Backup', true);
             }
         }
 
         function loadFromStorage() {
-            try {
-                const raw = localStorage.getItem(STORAGE_KEY);
-                if (!raw) return false;
-                const data = JSON.parse(raw);
-                if (data.suppliers && Array.isArray(data.suppliers) && data.suppliers.length > 0) {
-                    suppliers = data.suppliers;
-                    nextId = data.nextId || 1;
-                    if (data.mainTitle) document.getElementById('mainTitle').value = data.mainTitle;
-                    if (data.subTitle) document.getElementById('subTitle').value = data.subTitle;
-                    return true;
+            let data = null;
+
+            // Try localStorage first
+            if (checkStorage()) {
+                try {
+                    const raw = localStorage.getItem(STORAGE_KEY);
+                    if (raw) {
+                        data = JSON.parse(raw);
+                        storageMode = 'localStorage';
+                    }
+                } catch (e) {
+                    console.warn('localStorage load failed:', e);
                 }
-            } catch (e) {
-                console.error('Failed to load from storage:', e);
+            }
+
+            // Fall back to URL hash
+            if (!data) {
+                data = decodeHash();
+                if (data) storageMode = 'URL hash';
+            }
+
+            if (data && data.suppliers && Array.isArray(data.suppliers) && data.suppliers.length > 0) {
+                suppliers = data.suppliers;
+                nextId = data.nextId || 1;
+                if (data.currentId) currentId = data.currentId;
+                if (data.mainTitle) document.getElementById('mainTitle').value = data.mainTitle;
+                if (data.subTitle) document.getElementById('subTitle').value = data.subTitle;
+                return true;
             }
             return false;
         }
@@ -326,7 +398,6 @@
             el.className = 'save-status' + (isError ? '' : '');
             if (!isError) {
                 el.style.color = '#27ae60';
-                setTimeout(() => { el.style.color = ''; }, 2000);
             } else {
                 el.style.color = '#e74c3c';
             }
@@ -343,8 +414,11 @@
                 addSupplier('DHL Freight', 'BE Linehaul');
                 addSupplier('DSV Road', 'EU External Order');
                 addSupplier('Girteka', 'LGG LH Self Business');
+                currentId = suppliers.length > 0 ? suppliers[0].id : null;
             }
-            currentId = suppliers.length > 0 ? suppliers[0].id : null;
+            if (currentId === null && suppliers.length > 0) {
+                currentId = suppliers[0].id;
+            }
             if (currentId !== null) {
                 switchSupplier(currentId);
             } else {
@@ -639,7 +713,8 @@
 
         function resetAll(){
             if(!confirm('This will clear ALL supplier data and reset to defaults. Are you sure?'))return;
-            localStorage.removeItem(STORAGE_KEY);
+            try { localStorage.removeItem(STORAGE_KEY); } catch(e){}
+            if (history.replaceState) { history.replaceState(null, '', location.pathname + location.search); }
             suppliers=[];nextId=1;currentId=null;
             document.getElementById('mainTitle').value='Cainiao Truck Linehaul - Supplier KPI Scorecard';
             document.getElementById('subTitle').value='European Linehaul Operations | Performance Assessment Framework';
