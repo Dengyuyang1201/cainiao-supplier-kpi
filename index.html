@@ -25,6 +25,8 @@
         .btn-danger:hover { background: #c0392b; }
         .btn-secondary { background: #95a5a6; color: white; }
         .btn-secondary:hover { background: #7f8c8d; }
+        .btn-warning { background: #f39c12; color: white; }
+        .btn-warning:hover { background: #d68910; }
         .main { display: flex; height: calc(100vh - 110px); }
         .sidebar { width: 280px; background: white; border-right: 1px solid #ddd; overflow-y: auto; padding: 15px; }
         .sidebar h3 { font-size: 14px; color: #555; margin: 15px 0 10px; padding-bottom: 8px; border-bottom: 2px solid #3498db; }
@@ -86,16 +88,20 @@
         .rank-1 { background: #fff9e6 !important; font-weight: 700; }
         .rank-2 { background: #f5f5f5 !important; font-weight: 600; }
         .rank-3 { background: #fdf2e9 !important; font-weight: 600; }
-        .notice { background: #fff3cd; border-left: 4px solid #f39c12; padding: 10px 15px; font-size: 12px; color: #856404; margin-bottom: 15px; border-radius: 4px; }
+        .notice { background: #d4edda; border-left: 4px solid #27ae60; padding: 10px 15px; font-size: 12px; color: #155724; margin-bottom: 15px; border-radius: 4px; }
+        .notice.warn { background: #fff3cd; border-left-color: #f39c12; color: #856404; }
         .group-header { font-size: 14px; font-weight: 700; color: #2c3e50; margin: 15px 0 8px; padding: 8px 12px; background: #eef2f7; border-radius: 4px; border-left: 4px solid #3498db; }
+        .save-status { font-size: 12px; color: #27ae60; margin-left: auto; display: flex; align-items: center; gap: 5px; }
+        .save-status.saving { color: #f39c12; }
     </style>
 </head>
 <body>
     <div class="header">
         <div class="header-title-group">
-            <input type="text" class="title-input" id="mainTitle" value="Cainiao Truck Linehaul - Supplier KPI Scorecard">
-            <input type="text" class="subtitle-input" id="subTitle" value="European Linehaul Operations | Performance Assessment Framework">
+            <input type="text" class="title-input" id="mainTitle" value="Cainiao Truck Linehaul - Supplier KPI Scorecard" onchange="saveSettings()">
+            <input type="text" class="subtitle-input" id="subTitle" value="European Linehaul Operations | Performance Assessment Framework" onchange="saveSettings()">
         </div>
+        <div class="save-status" id="saveStatus"><span>&#10003;</span> Auto-saved</div>
     </div>
 
     <div class="toolbar">
@@ -103,7 +109,10 @@
         <button class="btn btn-danger" onclick="deleteCurrentSupplier()">Delete Current</button>
         <button class="btn btn-success" onclick="calculateAllSuppliers()">Calculate All</button>
         <button class="btn btn-secondary" onclick="exportExcel()">Export Excel (.xlsx)</button>
-        <button class="btn btn-secondary" onclick="resetAll()">Reset All</button>
+        <button class="btn btn-warning" onclick="exportJSON()">Export JSON Backup</button>
+        <button class="btn btn-secondary" onclick="document.getElementById('jsonImportInput').click()">Import JSON Backup</button>
+        <input type="file" id="jsonImportInput" accept=".json" style="display:none" onchange="importJSON(this)">
+        <button class="btn btn-danger" onclick="resetAll()">Reset All</button>
     </div>
 
     <div class="main">
@@ -114,8 +123,8 @@
         </div>
 
         <div class="content">
-            <div class="notice">
-                Data is saved in browser memory only. Refreshing the page will erase all data. Use "Export Excel" to save your work.
+            <div class="notice" id="saveNotice">
+                Data is automatically saved to your browser. It will persist after refreshing the page. Use "Export JSON Backup" to share data with teammates or migrate to another device.
             </div>
 
             <div class="card">
@@ -268,18 +277,81 @@
 
     <script>
         // ===== DATA STORE =====
+        const STORAGE_KEY = 'cainiao_kpi_scorecard_v3';
         let suppliers = [];
         let currentId = null;
         let nextId = 1;
         const BUSINESS_TYPES = ['BE Linehaul', 'EU External Order', 'LGG LH Self Business'];
         const defaultData = { lead_time:'', otd_rate:'', pod_rate:'', ata_rate:'', violations:'', participation:'', positive_events:'', negative_events:'', volume_share:'' };
 
+        // ===== LOCALSTORAGE =====
+        function saveToStorage() {
+            const data = {
+                suppliers: suppliers,
+                nextId: nextId,
+                currentId: currentId,
+                mainTitle: document.getElementById('mainTitle').value,
+                subTitle: document.getElementById('subTitle').value,
+                savedAt: new Date().toISOString()
+            };
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+                showSaveStatus('Auto-saved');
+            } catch (e) {
+                showSaveStatus('Save failed (storage full)', true);
+            }
+        }
+
+        function loadFromStorage() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (!raw) return false;
+                const data = JSON.parse(raw);
+                if (data.suppliers && Array.isArray(data.suppliers) && data.suppliers.length > 0) {
+                    suppliers = data.suppliers;
+                    nextId = data.nextId || 1;
+                    if (data.mainTitle) document.getElementById('mainTitle').value = data.mainTitle;
+                    if (data.subTitle) document.getElementById('subTitle').value = data.subTitle;
+                    return true;
+                }
+            } catch (e) {
+                console.error('Failed to load from storage:', e);
+            }
+            return false;
+        }
+
+        function showSaveStatus(text, isError) {
+            const el = document.getElementById('saveStatus');
+            el.innerHTML = isError ? '<span>&#9888;</span> ' + text : '<span>&#10003;</span> ' + text;
+            el.className = 'save-status' + (isError ? '' : '');
+            if (!isError) {
+                el.style.color = '#27ae60';
+                setTimeout(() => { el.style.color = ''; }, 2000);
+            } else {
+                el.style.color = '#e74c3c';
+            }
+        }
+
+        function saveSettings() {
+            saveToStorage();
+        }
+
         // ===== INIT =====
         function init() {
-            addSupplier('DHL Freight', 'BE Linehaul');
-            addSupplier('DSV Road', 'EU External Order');
-            addSupplier('Girteka', 'LGG LH Self Business');
-            switchSupplier(suppliers[0].id);
+            const hasStored = loadFromStorage();
+            if (!hasStored) {
+                addSupplier('DHL Freight', 'BE Linehaul');
+                addSupplier('DSV Road', 'EU External Order');
+                addSupplier('Girteka', 'LGG LH Self Business');
+            }
+            currentId = suppliers.length > 0 ? suppliers[0].id : null;
+            if (currentId !== null) {
+                switchSupplier(currentId);
+            } else {
+                renderSupplierList();
+                renderSummaryTable();
+                renderGroupRankings();
+            }
         }
 
         // ===== SUPPLIER MANAGEMENT =====
@@ -292,6 +364,7 @@
                 scores: { delivery:0, service:0, volume:0, total:0, grade:'B' }
             };
             suppliers.push(supplier);
+            saveToStorage();
             renderSupplierList();
             renderSummaryTable();
             renderGroupRankings();
@@ -302,17 +375,18 @@
             if (suppliers.length <= 1) { alert('At least one supplier must remain.'); return; }
             suppliers = suppliers.filter(s => s.id !== currentId);
             currentId = suppliers[0].id;
+            saveToStorage();
             switchSupplier(currentId);
         }
 
         function updateSupplierName(name) {
             const s = suppliers.find(x => x.id === currentId);
-            if (s) { s.name = name; renderSupplierList(); renderSummaryTable(); renderGroupRankings(); }
+            if (s) { s.name = name; saveToStorage(); renderSupplierList(); renderSummaryTable(); renderGroupRankings(); }
         }
 
         function updateSupplierType(type) {
             const s = suppliers.find(x => x.id === currentId);
-            if (s) { s.businessType = type; renderSupplierList(); renderSummaryTable(); renderGroupRankings(); }
+            if (s) { s.businessType = type; saveToStorage(); renderSupplierList(); renderSummaryTable(); renderGroupRankings(); }
         }
 
         function switchSupplier(id) {
@@ -333,6 +407,7 @@
             if (!s) return;
             const fields = ['lead_time','otd_rate','pod_rate','ata_rate','violations','participation','positive_events','negative_events','volume_share'];
             fields.forEach(f => { const el = document.getElementById(f); if (el) s.data[f] = el.value; });
+            saveToStorage();
         }
 
         // ===== CALCULATION =====
@@ -377,7 +452,7 @@
             document.getElementById('total_score_display').className='total-score '+gradeClass;
             document.getElementById('grade_display').className='grade-label '+gradeClass;
             document.getElementById('grade_display').textContent=grade;
-            if(currentId!==null){const s=suppliers.find(x=>x.id===currentId);if(s){s.scores={delivery,service,volume,total,grade:grade.split(' ')[1]};renderSupplierList();renderSummaryTable();renderGroupRankings();}}
+            if(currentId!==null){const s=suppliers.find(x=>x.id===currentId);if(s){s.scores={delivery,service,volume,total,grade:grade.split(' ')[1]};saveToStorage();renderSupplierList();renderSummaryTable();renderGroupRankings();}}
         }
 
         function getWeighted(id){const el=document.getElementById(id+'_weighted');return el?parseFloat(el.textContent)||0:0;}
@@ -393,6 +468,7 @@
                 let gr='C'; if(tot>=90&&vvol>=10) gr='A'; else if(tot>=70) gr='B';
                 s.scores={delivery:del,service:ser,volume:vol,total:tot,grade:gr};
             });
+            saveToStorage();
             switchSupplier(currentId);
         }
 
@@ -459,6 +535,55 @@
         function hideAddModal(){document.getElementById('addModal').classList.remove('show');}
         function confirmAddSupplier(){const name=document.getElementById('newSupplierName').value.trim();const type=document.getElementById('newSupplierType').value;if(!name)return;const id=addSupplier(name,type);switchSupplier(id);hideAddModal();}
 
+        // ===== JSON IMPORT/EXPORT =====
+        function exportJSON() {
+            calculateAllSuppliers();
+            const data = {
+                suppliers: suppliers,
+                nextId: nextId,
+                mainTitle: document.getElementById('mainTitle').value,
+                subTitle: document.getElementById('subTitle').value,
+                exportedAt: new Date().toISOString(),
+                version: 'v3'
+            };
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'cainiao_kpi_backup_' + new Date().toISOString().slice(0,10) + '.json';
+            a.click();
+            URL.revokeObjectURL(url);
+            showSaveStatus('JSON exported');
+        }
+
+        function importJSON(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (!data.suppliers || !Array.isArray(data.suppliers)) {
+                        alert('Invalid JSON file: missing suppliers data.');
+                        return;
+                    }
+                    if (!confirm(`Import ${data.suppliers.length} suppliers from backup?\nThis will REPLACE all current data.`)) return;
+                    suppliers = data.suppliers;
+                    nextId = data.nextId || 1;
+                    if (data.mainTitle) document.getElementById('mainTitle').value = data.mainTitle;
+                    if (data.subTitle) document.getElementById('subTitle').value = data.subTitle;
+                    currentId = suppliers.length > 0 ? suppliers[0].id : null;
+                    saveToStorage();
+                    if (currentId !== null) switchSupplier(currentId);
+                    showSaveStatus('JSON imported');
+                } catch (err) {
+                    alert('Failed to import JSON: ' + err.message);
+                }
+            };
+            reader.readAsText(file);
+            input.value = '';
+        }
+
         // ===== EXCEL EXPORT =====
         function exportExcel() {
             calculateAllSuppliers();
@@ -466,13 +591,11 @@
             const mainTitle=document.getElementById('mainTitle').value||'Supplier KPI Scorecard';
             const subTitle=document.getElementById('subTitle').value||'';
 
-            // 1. Summary Sheet - All Suppliers
             const summaryData=[[mainTitle],[subTitle],['Generated: '+new Date().toLocaleString()],[],['Rank','Supplier Name','Business Type','Delivery (60%)','Service (20%)','Volume (20%)','Total Score','Volume Share %','Grade']];
             const sorted=[...suppliers].sort((a,b)=>b.scores.total-a.scores.total);
             sorted.forEach((s,idx)=>{summaryData.push([idx+1,s.name,s.businessType,s.scores.delivery.toFixed(2),s.scores.service.toFixed(2),s.scores.volume.toFixed(2),s.scores.total.toFixed(2),(parseFloat(s.data.volume_share)||0).toFixed(1)+'%',s.scores.grade]);});
             XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(summaryData),'Summary');
 
-            // 2. Group Ranking Sheets
             BUSINESS_TYPES.forEach(type=>{
                 const group=suppliers.filter(s=>s.businessType===type).sort((a,b)=>b.scores.total-a.scores.total);
                 if(group.length===0) return;
@@ -482,7 +605,6 @@
                 XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(data),sheetName);
             });
 
-            // 3. Each supplier detail sheet
             suppliers.forEach(s=>{
                 const sheetName=s.name.substring(0,31).replace(/[:\\/?*\[\]]/g,'-');
                 const vlt=parseFloat(s.data.lead_time)||0,votd=parseFloat(s.data.otd_rate)||0,vpod=parseFloat(s.data.pod_rate)||0,vata=parseFloat(s.data.ata_rate)||0;
@@ -515,7 +637,16 @@
             XLSX.writeFile(wb,'Supplier_KPI_Scorecard_'+new Date().toISOString().slice(0,10)+'.xlsx');
         }
 
-        function resetAll(){if(!confirm('This will clear ALL supplier data. Are you sure?'))return;suppliers=[];nextId=1;currentId=null;init();}
+        function resetAll(){
+            if(!confirm('This will clear ALL supplier data and reset to defaults. Are you sure?'))return;
+            localStorage.removeItem(STORAGE_KEY);
+            suppliers=[];nextId=1;currentId=null;
+            document.getElementById('mainTitle').value='Cainiao Truck Linehaul - Supplier KPI Scorecard';
+            document.getElementById('subTitle').value='European Linehaul Operations | Performance Assessment Framework';
+            init();
+            showSaveStatus('Reset to defaults');
+        }
+
         document.getElementById('newSupplierName').addEventListener('keypress',function(e){if(e.key==='Enter')confirmAddSupplier();});
         init();
     </script>
